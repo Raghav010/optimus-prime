@@ -9,6 +9,7 @@ from spacy.lang.en import English
 from spacy.lang.fr import French
 import re
 import random
+import sys
 
 ## Defining all the transformer classes
 
@@ -532,7 +533,7 @@ def collater(data):
 
     return (enc_inputs,enc_inputs_mask,dec_inputs,dec_inputs_mask,dec_targets)
 
-batchSize=10
+batchSize=int(sys.argv[2])
 train_DL=DataLoader(en_fr_Dataset(indexed_data[0]),batch_size=batchSize,collate_fn=collater)
 val_DL=DataLoader(en_fr_Dataset(indexed_data[1]),batch_size=batchSize,collate_fn=collater)
 
@@ -558,20 +559,20 @@ device = (
 print(f"Using {device} device")
 
 
-
-
-epochs=15
-lr=3
-heads=4
-dropout=0.1
-baseDir=f'./transformerModels/model_epoch{epochs}_heads{heads}_lr{lr}_dropout{dropout}_batchSize{batchSize}/'
-os.mkdir(baseDir)
-
 from nltk.translate.bleu_score import sentence_bleu
 import os
 
+epochs=int(sys.argv[1])
+lr=3
+heads=int(sys.argv[3])
+dropout=float(sys.argv[4])
+embedSize=int(sys.argv[5])
+baseDir=f'./transformerModels/model_epoch{epochs}_heads{heads}_lr{lr}_dropout{dropout}_batchSize{batchSize}_embedSize{embedSize}/'
+os.mkdir(baseDir)
+
+
 # Load model,optimizer and loss function and get device
-model=Transformer_custom(2,300,heads,en_vocab_len,fr_vocab_len).to(device)
+model=Transformer_custom(2,embedSize,heads,en_vocab_len,fr_vocab_len).to(device)
 
 loss_fn = nn.CrossEntropyLoss()
 
@@ -612,6 +613,7 @@ def test(model,DL,loss_fn,optimizer,bleu_scores=False,bleu_score_file=None):
     model.eval()
     total_loss=0
     count=0
+    total_bleu=0
     with torch.no_grad():
         for enc_inputs,enc_inputs_mask,dec_inputs,dec_inputs_mask,dec_targets in DL:
 
@@ -625,6 +627,7 @@ def test(model,DL,loss_fn,optimizer,bleu_scores=False,bleu_score_file=None):
                     references=torch.argmax(dec_targets,dim=2).tolist()
                     for r,c in zip(references,candidates):
                         b_score=sentence_bleu([r],c)
+                        total_bleu+=b_score
                         bleu_score_file.write(f'{b_score}\n')
 
 
@@ -641,7 +644,10 @@ def test(model,DL,loss_fn,optimizer,bleu_scores=False,bleu_score_file=None):
 
         avgLoss=(total_loss/len(DL))
         print(f'Test Loss: {avgLoss}\n')
-    return avgLoss
+    ret=avgLoss
+    if bleu_scores:
+        ret=(avgLoss,total_bleu/len(DL.dataset))
+    return ret
 
 
 
@@ -671,6 +677,8 @@ with open(f'{baseDir}Stats.csv','w') as csvh:
             torch.save(model.state_dict(),f'{baseDir}transformer{str(t+1)}epoch.pth')
     print("Done!")
 
+# saving the final model
+torch.save(model.state_dict(),f'{baseDir}transformer{str(epochs)}epoch.pth')
 
 
 # Testing----------------------------------------
@@ -685,10 +693,14 @@ with open(f'{baseDir}TestScore.txt','w') as testScore:
     with open(f'{baseDir}TrainBleu.txt','w') as train_b:
         with open(f'{baseDir}TestBleu.txt','w') as test_b:
             print("Calculating Train Bleu scores")
-            test(model,train_DL,loss_fn,optimizer,True,train_b)
+            trainS=test(model,train_DL,loss_fn,optimizer,True,train_b)
+            train_b.write(f'{trainS[1]}\n')
+
+
             print("Calculating Test Bleu scores")
             testStats=test(model,test_DL,loss_fn,optimizer,True,test_b)
-            testScore.write(f'{testStats}\n')
+            testScore.write(f'{testStats[0]}\n')
+            test_b.write(f'{testStats[1]}\n')
 
 
 
